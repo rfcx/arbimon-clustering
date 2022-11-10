@@ -32,6 +32,9 @@ def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource):
         print('(debug) downloading: ', obj.key)
         bucket.download_file(obj.key, local_dir+obj.key.split('/')[-1])
 
+        
+        
+        
 def cluster(data, eps, min_pts, method='dbscan', metric='euclidean', stdz=True):
     if stdz:
         data = scaler.fit_transform(data)
@@ -130,10 +133,7 @@ if __name__ == "__main__":
 
     #--- check for no AEDs:
     if len(feas)==0:
-        upd = jobs.update(jobs.c.job_id==job_id).values(state='error',last_update=dt.datetime.now())
-        session.execute(upd)
-        session.commit()
-        os.sys.exit('No AEDs in dataset')
+        return_empty_job()
 
     feas = np.vstack(feas)
     ids = np.hstack(ids)
@@ -163,10 +163,6 @@ if __name__ == "__main__":
 
 
     #--- cluster
-    #print('clustering by time of day...')
-    #t0 = time.time()
-    #clust = MiniBatchKMeans(n_clusters=2, init_size=int(feas.shape[0]*0.05), random_state=1).fit(scaler.fit_transform(feas[:,:2]))
-    #print('\t',time.time() - t0)
     
     print('Clustering...')
     t0 = time.time()
@@ -207,10 +203,7 @@ if __name__ == "__main__":
         tmp5.append(inpt[clust==i][:max_cluster_size])
         
     if len(tmp1)==0:
-        upd = jobs.update(jobs.c.job_id==job_id).values(state='error',last_update=dt.datetime.now())
-        session.execute(upd)
-        session.commit()
-        os.sys.exit('No clusters found')
+        return_empty_job()
         
     feas = np.vstack(tmp1)
     ids = np.hstack(tmp2)
@@ -291,6 +284,44 @@ if __name__ == "__main__":
     
     shutil.rmtree(localdir)
     print('Done')
+    
+    
+    
+    
+def return_empty_job():
+    upd = jobs.update(jobs.c.job_id==job_id).values(state='completed',last_update=dt.datetime.now())
+    session.execute(upd)
+    session.commit()
+
+    # store empty aed metadata
+    jsn = {
+        'aed_id':[],
+        'recording_id':[],
+        'freq_low':[],
+        'freq_high':[],
+        'time_min':[],
+        'time_max':[]
+    }
+    file = str(job_id)+'_aed_info.json'
+    with open(file, 'w') as f:
+        json.dump(jsn, f)
+    s3.Bucket(bucket).upload_file(file, s3_out_folder+file, )
+    os.remove(file)
+
+    # store empty projection map
+    jsn = {
+        'aed_id':[],
+        'x_coord':[],
+        'y_coord':[],
+        'cluster':[],
+    }
+    file = str(job_id)+'_lda.json'
+    with open(file, 'w') as f:
+        json.dump(jsn, f)
+    s3.Bucket(bucket).upload_file(file, s3_out_folder+file)
+    os.remove(file)
+
+    os.sys.exit('No clusters found')
 
 
 
