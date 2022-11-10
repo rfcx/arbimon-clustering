@@ -3,3 +3,4 @@ run_cluster.sh
 set_env_vars.sh
 arc
 __pycache__
+notes.md
