@@ -60,7 +60,7 @@ jobs:
       previous-run-id: ${{ needs.prepare.outputs.previous-run-id }}
       status: ${{ needs.deploy.result }}
       always: true
-      notification-title: 'CD: Arbimon Clustering'
+      notification-title: 'CD: Arbimon Jobs Clustering'
       notification-footer: "Build: ${{ needs.build.result || 'n/a' }}"
       notification-success-statement: '{0} deployed the build!'
     secrets:
