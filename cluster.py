@@ -72,19 +72,12 @@ def return_empty_job():
     
     
     
-def cluster(data, eps, min_pts, method='dbscan', metric='euclidean', stdz=True):
+def cluster(data, eps, min_pts, metric='euclidean', stdz=True):
     if stdz:
         data = scaler.fit_transform(data)
-    if method == 'dbscan':
-        clust = DBSCAN(eps = eps, 
-                       min_samples = min_pts, 
-                       metric = metric).fit(data)
-    elif method == 'hdbscan':
-        clust = hdbscan.HDBSCAN(min_samples = min_pts,
-                                allow_single_cluster = False,
-                                metric = metric).fit(data)
-    else:
-        print('Error: unknown input method.')
+    clust = DBSCAN(eps = eps, 
+                   min_samples = min_pts, 
+                   metric = metric).fit(data)
     return clust
 
 
@@ -110,8 +103,6 @@ if __name__ == "__main__":
     print('aed_job_id: '+str(aed_job_id))
     print('eps: '+str(epsilon))
     print('min. pts: '+str(min_pts))
-
-    method = 'dbscan' # clustering algorithm (dbscan or hdbscan)
     
     bucket = 'arbimon2' # where job results will be stored
     print(bucket)
@@ -208,8 +199,7 @@ if __name__ == "__main__":
                       hogmap]) # shape features
     clust = cluster(inpt, 
                     eps=epsilon, 
-                    min_pts=min_pts, 
-                    method=method)
+                    min_pts=min_pts)
     clust = clust.labels_
     print('\t',time.time() - t0)
     
