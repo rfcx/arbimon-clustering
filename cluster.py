@@ -20,7 +20,7 @@ scaler = StandardScaler() # data scaler
 session, engine, metadata = connect() # RDS connection
 print('DB connections...')
 jobs = sqal.Table('jobs', metadata, autoload=True, autoload_with=engine)
-
+job_params = sqal.Table('job_params_audio_event_clustering', metadata, autoload=True, autoload_with=engine)
 log_filename = '_log.json'
 progress = 0
 
@@ -34,7 +34,44 @@ def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource):
 
         
         
-        
+def return_empty_job():
+    upd = jobs.update(jobs.c.job_id==job_id).values(state='completed',last_update=dt.datetime.now())
+    session.execute(upd)
+    session.commit()
+
+    # store empty aed metadata
+    jsn = {
+        'aed_id':[],
+        'recording_id':[],
+        'freq_low':[],
+        'freq_high':[],
+        'time_min':[],
+        'time_max':[]
+    }
+    file = str(job_id)+'_aed_info.json'
+    with open(file, 'w') as f:
+        json.dump(jsn, f)
+    s3.Bucket(bucket).upload_file(file, s3_out_folder+file)
+    os.remove(file)
+
+    # store empty projection map
+    jsn = {
+        'aed_id':[],
+        'x_coord':[],
+        'y_coord':[],
+        'cluster':[],
+    }
+    file = str(job_id)+'_lda.json'
+    with open(file, 'w') as f:
+        json.dump(jsn, f)
+    s3.Bucket(bucket).upload_file(file, s3_out_folder+file)
+    os.remove(file)
+
+    os.sys.exit('No clusters found')
+    
+    
+    
+    
 def cluster(data, eps, min_pts, method='dbscan', metric='euclidean', stdz=True):
     if stdz:
         data = scaler.fit_transform(data)
@@ -220,6 +257,11 @@ if __name__ == "__main__":
                                                     last_update=dt.datetime.now())
     session.execute(upd)
     session.commit()
+        
+    upd = job_params.update(job_params.c.job_id==job_id).values(aeds_clustered=len(clust),
+                                                                clusters_detected=len(set(clust)))
+    session.execute(upd)        
+    session.commit()
     
     # store aed metadata
     jsn = {
@@ -284,44 +326,6 @@ if __name__ == "__main__":
     
     shutil.rmtree(localdir)
     print('Done')
-    
-    
-    
-    
-def return_empty_job():
-    upd = jobs.update(jobs.c.job_id==job_id).values(state='completed',last_update=dt.datetime.now())
-    session.execute(upd)
-    session.commit()
-
-    # store empty aed metadata
-    jsn = {
-        'aed_id':[],
-        'recording_id':[],
-        'freq_low':[],
-        'freq_high':[],
-        'time_min':[],
-        'time_max':[]
-    }
-    file = str(job_id)+'_aed_info.json'
-    with open(file, 'w') as f:
-        json.dump(jsn, f)
-    s3.Bucket(bucket).upload_file(file, s3_out_folder+file, )
-    os.remove(file)
-
-    # store empty projection map
-    jsn = {
-        'aed_id':[],
-        'x_coord':[],
-        'y_coord':[],
-        'cluster':[],
-    }
-    file = str(job_id)+'_lda.json'
-    with open(file, 'w') as f:
-        json.dump(jsn, f)
-    s3.Bucket(bucket).upload_file(file, s3_out_folder+file)
-    os.remove(file)
-
-    os.sys.exit('No clusters found')
 
 
 
