@@ -117,7 +117,7 @@ if __name__ == "__main__":
     print(bucket)
     s3_aed_folder = 'audio_events/'+os.environ.get('DEV_OR_PROD')+'/detection/'+str(aed_job_id)+'/'
     s3_out_folder = 'audio_events/'+os.environ.get('DEV_OR_PROD')+'/clustering/'+str(job_id)+'/'
-    localdir = './tmp/'
+    localdir = os.environ.get('TMP_PATH') or './tmp/'
     if not os.path.exists(localdir):
         os.mkdir(localdir)
     else:
