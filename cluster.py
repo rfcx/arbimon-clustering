@@ -277,7 +277,10 @@ if __name__ == "__main__":
     print('Projection...')
 
     # LDA
-    mp = LinearDiscriminantAnalysis(n_components=2).fit_transform(inpt, y=clust)
+    if len(set(clust))>=3:
+        mp = LinearDiscriminantAnalysis(n_components=2).fit_transform(inpt, y=clust)
+    else:
+        mp = PCA(n_components=2).fit_transform(inpt)
     
     # sort clusters
     print('Sorting clusters by projection...')
