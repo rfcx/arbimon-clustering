@@ -5,10 +5,11 @@ import getopt
 import boto3
 import time
 import numpy as np
-from sklearn.cluster import DBSCAN, MiniBatchKMeans
+from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.metrics import pairwise_distances
 import umap
 import pacmap
 # import hdbscan
@@ -223,11 +224,16 @@ if __name__ == "__main__":
     tmp4 = []
     tmp5 = []
     for i in list(set(clust)):
-        tmp1.append(feas[clust==i][:max_cluster_size])
-        tmp2.append(ids[clust==i][:max_cluster_size])
-        tmp3.append(hogmap[clust==i][:max_cluster_size])
-        tmp4.append(clust[clust==i][:max_cluster_size])
-        tmp5.append(inpt[clust==i][:max_cluster_size])
+        print('cluster min freq:',feas[clust==i,0].min())
+        print('cluster max freq:',feas[clust==i,1].max())
+        # sort by distance to neighbors
+        dist_sorted_idx = pairwise_distances(scaler.fit_transform(inpt[clust==i])).sum(axis=1)
+        dist_sorted_idx = np.argsort(dist_sorted_idx)
+        tmp1.append(feas[clust==i][dist_sorted_idx[:max_cluster_size]])
+        tmp2.append(ids[clust==i][dist_sorted_idx[:max_cluster_size]])
+        tmp3.append(hogmap[clust==i][dist_sorted_idx[:max_cluster_size]])
+        tmp4.append(clust[clust==i][dist_sorted_idx[:max_cluster_size]])
+        tmp5.append(inpt[clust==i][dist_sorted_idx[:max_cluster_size]])
         
     if len(tmp1)==0:
         return_empty_job()
