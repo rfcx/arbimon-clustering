@@ -26,15 +26,15 @@ log_filename = '_log.json'
 progress = 0
 
 def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource):
-    bucket = s3_resource.Bucket(bucket_name) 
+    bucket = s3_resource.Bucket(bucket_name)
     for obj in bucket.objects.filter(Prefix = s3_dir):
         if not obj.key.split('.')[-1]=='npy':
             continue
         print('(debug) downloading: ', obj.key)
         bucket.download_file(obj.key, local_dir+obj.key.split('/')[-1])
 
-        
-        
+
+
 def return_empty_job():
     upd = jobs.update(jobs.c.job_id==job_id).values(state='completed',last_update=dt.datetime.now())
     session.execute(upd)
@@ -68,16 +68,17 @@ def return_empty_job():
     s3.Bucket(bucket).upload_file(file, s3_out_folder+file)
     os.remove(file)
 
-    os.sys.exit('No clusters found')
-    
-    
-    
-    
+    print('No clusters found')
+    os.sys.exit(0)
+
+
+
+
 def cluster(data, eps, min_pts, metric='euclidean', stdz=True):
     if stdz:
         data = scaler.fit_transform(data)
-    clust = DBSCAN(eps = eps, 
-                   min_samples = min_pts, 
+    clust = DBSCAN(eps = eps,
+                   min_samples = min_pts,
                    metric = metric).fit(data)
     return clust
 
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     print('aed_job_id: '+str(aed_job_id))
     print('eps: '+str(epsilon))
     print('min. pts: '+str(min_pts))
-    
+
     bucket = 'arbimon2' # where job results will be stored
     print(bucket)
     s3_aed_folder = 'audio_events/'+os.environ.get('DEV_OR_PROD')+'/detection/'+str(aed_job_id)+'/'
@@ -115,11 +116,11 @@ if __name__ == "__main__":
     else:
         shutil.rmtree(localdir)
         os.mkdir(localdir)
-        
+
     #--- cloud storage connection
     if os.environ.get('AWS_ACCESS_KEY_ID'):
-        s3 = boto3.resource('s3', 
-                            aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID'), 
+        s3 = boto3.resource('s3',
+                            aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID'),
                             aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY'))
     else:
         s3 = boto3.resource('s3')
@@ -131,9 +132,9 @@ if __name__ == "__main__":
     session.execute(upd)
     session.commit()
 
-    
-    
-    
+
+
+
     t0 = time.time()
     #--- download aed features
     print('Downloading...')
@@ -144,7 +145,7 @@ if __name__ == "__main__":
     print('secret_access_key 0-3: ', os.environ.get('AWS_SECRET_ACCESS_KEY')[:3])
     downloadDirectoryFroms3(bucket, s3_aed_folder, localdir, s3)
     print(len(os.listdir(localdir)), ' feature files downloaded.')
-    
+
     #--- load feature data
     print('Loading features...')
     feas = [] # contains features from aed job
@@ -177,10 +178,10 @@ if __name__ == "__main__":
         # 5 end time
         # 6 recording id
         # 7 HOG features
-        
+
     # reduce HOG features to 2D map
     hogmap = pacmap.PaCMAP(n_components=2).fit_transform(scaler.fit_transform(feas[:,5:]))
-                                                         
+
     print('Data loaded...', time.time()-t0)
     progress = 2 # data loaded
     upd = jobs.update(jobs.c.job_id==job_id).values(progress=jobs.c.progress+1,
@@ -192,18 +193,18 @@ if __name__ == "__main__":
 
 
     #--- cluster
-    
+
     print('Clustering...')
     t0 = time.time()
     inpt = np.hstack([feas[:,:2], # min and max frequency
                       np.array(feas[:,3]-feas[:,2])[...,np.newaxis], # duration
                       hogmap]) # shape features
-    clust = cluster(inpt, 
-                    eps=epsilon, 
+    clust = cluster(inpt,
+                    eps=epsilon,
                     min_pts=min_pts)
     clust = clust.labels_
     print('\t',time.time() - t0)
-    
+
     print('Number pts: '+str(len(clust)))
     print('Clustered pts: '+str(len(clust[clust!=-1])))
     print('Number clusters: '+str(len(set(clust).difference([-1]))))
@@ -234,10 +235,10 @@ if __name__ == "__main__":
         tmp3.append(hogmap[clust==i][dist_sorted_idx[:max_cluster_size]])
         tmp4.append(clust[clust==i][dist_sorted_idx[:max_cluster_size]])
         tmp5.append(inpt[clust==i][dist_sorted_idx[:max_cluster_size]])
-        
+
     if len(tmp1)==0:
         return_empty_job()
-        
+
     feas = np.vstack(tmp1)
     ids = np.hstack(tmp2)
     hogmap = np.vstack(tmp3)
@@ -245,20 +246,20 @@ if __name__ == "__main__":
     inpt = np.vstack(tmp5)
     del tmp1, tmp2, tmp3, tmp4, tmp5
     print('\t',time.time() - t0)
-    
+
     inpt = scaler.fit_transform(inpt)
-    
+
     progress = 3 # clustering completed
     upd = jobs.update(jobs.c.job_id==job_id).values(progress=jobs.c.progress+1,
                                                     last_update=dt.datetime.now())
     session.execute(upd)
     session.commit()
-        
+
     upd = job_params.update(job_params.c.job_id==job_id).values(aeds_clustered=len(clust),
                                                                 clusters_detected=len(set(clust)))
-    session.execute(upd)        
+    session.execute(upd)
     session.commit()
-    
+
     # store aed metadata
     jsn = {
         'aed_id':[int(i) for i in ids],
@@ -274,9 +275,9 @@ if __name__ == "__main__":
     s3.Bucket(bucket).upload_file(file, s3_out_folder+file)
     os.remove(file)
 
-    
-    
-    
+
+
+
     #--- projection
     t0 = time.time()
 
@@ -287,7 +288,7 @@ if __name__ == "__main__":
         mp = LinearDiscriminantAnalysis(n_components=2).fit_transform(inpt, y=clust)
     else:
         mp = PCA(n_components=2).fit_transform(inpt)
-    
+
     # sort clusters
     print('Sorting clusters by projection...')
     t0 = time.time()
@@ -295,13 +296,13 @@ if __name__ == "__main__":
     centroids = np.zeros((len(set(clust)), mp.shape[1]))
     for c,i in enumerate(list(set(clust))):
         centroids[c,:] = mp[clust==i].mean(axis=0)
-        labels[c] = i 
+        labels[c] = i
     tmp = umap.UMAP(n_components=1).fit_transform(scaler.fit_transform(centroids)).flatten()
     labeldict = dict(zip(labels[np.argsort(tmp)], range(len(labels))))
     clust = [labeldict[i] for i in clust]
     del tmp, centroids, labels, labeldict
     print('\t',time.time() - t0)
-    
+
     jsn = {
         'aed_id':[int(i) for i in ids],
         'x_coord':[float(i) for i in mp[:,0]],
@@ -322,7 +323,7 @@ if __name__ == "__main__":
     session.execute(upd)
     session.commit()
     session.close()
-    
+
     shutil.rmtree(localdir)
     print('Done')
 
