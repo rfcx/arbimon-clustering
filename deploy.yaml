@@ -5,11 +5,13 @@ metadata:
 spec:
   template:
     spec:
+      failedJobsHistoryLimit: 5
+      successfulJobsHistoryLimit: 1
       containers:
       - name: aed-clustering-container
         image: 887044485231.dkr.ecr.eu-west-1.amazonaws.com/arbimon/jobs/clustering
         envFrom:
-            secretRef:
+            - secretRef:
                 name: aed-clustering-secrets
         command: ["python",  "./cluster.py"]
         args: ["-e", "${ARG_EPSILON}", "-m", "${ARG_MINSAMPLES}", "-j", "${ARG_CLUSTER_JOBID}", "-a", "${ARG_AED_JOBID}", "-s", "${ARG_MAXCLUSTERSIZE}"]
@@ -18,8 +20,7 @@ spec:
                 memory: "16Gi"
             limits:
                 memory: "32Gi"
-        
       imagePullSecrets:
       - name: aedkey
       restartPolicy: Never
-  backoffLimit: 0    
+  backoffLimit: 0
