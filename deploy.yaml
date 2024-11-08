@@ -9,7 +9,7 @@ spec:
       successfulJobsHistoryLimit: 1
       containers:
       - name: aed-clustering-container
-        image: 887044485231.dkr.ecr.eu-west-1.amazonaws.com/arbimon/jobs/clustering
+        image: 887044485231.dkr.ecr.eu-west-1.amazonaws.com/arbimon-jobs-clustering
         envFrom:
             - secretRef:
                 name: aed-clustering-secrets
