@@ -1,4 +1,4 @@
-FROM python:3.7 as arbimon-jobs-clustering
+FROM python:3.8 as arbimon-jobs-clustering
 
 ADD cluster.py /
 ADD db.py /
