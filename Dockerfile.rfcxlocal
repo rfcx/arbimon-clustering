@@ -1,0 +1,37 @@
+# rfcx-local AED Clustering worker (job_type_id 9). Build context = the
+# rfcx/arbimon-clustering repo root (cluster.py + db.py) + the rfcx-local
+# wrapper cluster_run_job.py.
+#
+# Collapses the AWS-only design (arbimon-legacy posted this image as a k8s Job
+# directly to EKS) into a dispatcher-driven in-cluster Job invoked uniformly as:
+#     python3 cluster_run_job.py <job_id>
+# The wrapper reads job_params_audio_event_clustering for the aed_job_id +
+# DBSCAN params, then runs the upstream cluster.py verbatim.
+#
+# De-AWS changes (minimal + auditable):
+#   - cluster.py: boto3.resource('s3') -> honor S3_ENDPOINT (s3-proxy chain),
+#     applied in-source (already patched in the build context copy).
+#   - mysql-connector-python: upstream pinned 8.0.20 (no arm64 wheel); bump to
+#     8.1.0 (same version the rfcx-local AED worker uses). All other deps
+#     (umap-learn, pacmap, numba/llvmlite, faiss-cpu, scikit-learn) install
+#     clean on py3.8/arm64 (verified 2026-06-09).
+#   - DB creds via MYSQL_* env (db.py contract), S3 via AWS_*/S3_ENDPOINT, and
+#     DEV_OR_PROD selects the audio_events/<env>/... path segment (= "prod" to
+#     match the type-8 detection worker's output location).
+FROM python:3.8-slim AS aed-clustering-worker
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+      numpy==1.24.4 scikit-learn==1.3.2 scipy==1.10.1 boto3==1.28.71 \
+      npy-append-array umap-learn==0.5.7 pacmap==0.9.1 \
+      SQLAlchemy==1.4.47 mysql-connector-python==8.1.0
+
+WORKDIR /app
+COPY cluster.py /app/cluster.py
+COPY db.py /app/db.py
+COPY cluster_run_job.py /app/cluster_run_job.py
+
+ENTRYPOINT ["python3", "/app/cluster_run_job.py"]

@@ -118,12 +118,16 @@ if __name__ == "__main__":
         os.mkdir(localdir)
 
     #--- cloud storage connection
+    # rfcx-local: honor S3_ENDPOINT so reads (type-8 feature .npy) and writes
+    # (cluster result JSON) go through the in-cluster s3-proxy chain, not AWS.
+    _endpoint = os.environ.get('S3_ENDPOINT') or None
     if os.environ.get('AWS_ACCESS_KEY_ID'):
         s3 = boto3.resource('s3',
+                            endpoint_url = _endpoint,
                             aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID'),
                             aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY'))
     else:
-        s3 = boto3.resource('s3')
+        s3 = boto3.resource('s3', endpoint_url = _endpoint)
 
     print('initialized... ', time.time()-t0)
     progress = 1 # preparation completed
