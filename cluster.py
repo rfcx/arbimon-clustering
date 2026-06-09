@@ -25,13 +25,33 @@ job_params = sqal.Table('job_params_audio_event_clustering', metadata, autoload=
 log_filename = '_log.json'
 progress = 0
 
-def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource):
+def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource, aed_job_id):
+    # rfcx-local: the s3-proxy chain does NOT support ListObjects (GET-bucket
+    # returns 400 — it routes object GET/PUT/HEAD/DELETE by key only). The
+    # upstream code listed the prefix to discover the per-shard feature files;
+    # instead we derive their EXACT keys. The type-8 AED worker writes one pair
+    # per shard at <aed_job>_<worker_index>{_features,_ids}.npy with contiguous
+    # worker_index 0..N-1, so we probe sequentially and stop after a short run
+    # of missing indices (covers single-pod and parallel AED jobs alike).
     bucket = s3_resource.Bucket(bucket_name)
-    for obj in bucket.objects.filter(Prefix = s3_dir):
-        if not obj.key.split('.')[-1]=='npy':
-            continue
-        print('(debug) downloading: ', obj.key)
-        bucket.download_file(obj.key, local_dir+obj.key.split('/')[-1])
+    downloaded = 0
+    misses = 0
+    w = 0
+    while misses < 4:
+        got_any = False
+        for suf in ('_features.npy', '_ids.npy'):
+            key = f'{s3_dir}{aed_job_id}_{w}{suf}'
+            local = local_dir + key.split('/')[-1]
+            try:
+                bucket.download_file(key, local)
+                print('(debug) downloaded:', key)
+                downloaded += 1
+                got_any = True
+            except Exception:
+                pass
+        misses = 0 if got_any else misses + 1
+        w += 1
+    print(f'(debug) {downloaded} feature files downloaded for aed_job {aed_job_id}')
 
 
 
@@ -147,7 +167,7 @@ if __name__ == "__main__":
     print('localdir: ', localdir)
     print('access_key_id 0-3: ', os.environ.get('AWS_ACCESS_KEY_ID')[:3])
     print('secret_access_key 0-3: ', os.environ.get('AWS_SECRET_ACCESS_KEY')[:3])
-    downloadDirectoryFroms3(bucket, s3_aed_folder, localdir, s3)
+    downloadDirectoryFroms3(bucket, s3_aed_folder, localdir, s3, aed_job_id)
     print(len(os.listdir(localdir)), ' feature files downloaded.')
 
     #--- load feature data
