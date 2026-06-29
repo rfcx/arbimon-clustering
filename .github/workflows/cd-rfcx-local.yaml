@@ -1,0 +1,20 @@
+# rfcx-local CD: build the AED Clustering worker image (job type 9) and push it
+# to the in-cluster registry. Clustering runs as Jobs spawned by the
+# jobqueue-dispatcher, which references the rfcx-local-prod-latest tag, so a
+# build is all that's needed. Triggers on master push. (The AWS ECR pipeline in
+# cd.yaml is separate and unaffected — it uses Dockerfile, this uses
+# Dockerfile.rfcxlocal which bakes in cluster_run_job.py.)
+name: CD (rfcx-local)
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy-rfcx-local:
+    uses: rfcx/cicd/.github/workflows/rfcx-local-worker-cd.yaml@master
+    with:
+      dockerfile: Dockerfile.rfcxlocal
+      image: aed-clustering
+      repo: arbimon-clustering
