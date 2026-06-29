@@ -321,7 +321,24 @@ if __name__ == "__main__":
     for c,i in enumerate(list(set(clust))):
         centroids[c,:] = mp[clust==i].mean(axis=0)
         labels[c] = i
-    tmp = umap.UMAP(n_components=1).fit_transform(scaler.fit_transform(centroids)).flatten()
+    # Order clusters along a 1D projection so cluster ids are spatially
+    # coherent. UMAP needs a non-trivial neighbor graph; with <3 centroids it
+    # raised "ValueError: zero-size array" (umap.UMAP(n_components=1) on only 2
+    # clusters -> crashed the whole job; see rfcx-local job 167447). For the
+    # degenerate small-cluster case, fall back to ordering by the first
+    # projection coordinate (what the 1D UMAP embedding approximates anyway),
+    # which is well-defined for any number of centroids.
+    n_centroids = centroids.shape[0]
+    if n_centroids >= 4:
+        # cap n_neighbors at n_centroids-1 (umap warns+truncates otherwise)
+        n_nbr = min(15, n_centroids - 1)
+        tmp = umap.UMAP(n_components=1, n_neighbors=n_nbr).fit_transform(
+            scaler.fit_transform(centroids)).flatten()
+    elif n_centroids >= 1:
+        # 1-3 centroids: sort by the first projection axis (no UMAP).
+        tmp = scaler.fit_transform(centroids)[:, 0]
+    else:
+        tmp = np.zeros((0,))
     labeldict = dict(zip(labels[np.argsort(tmp)], range(len(labels))))
     clust = [labeldict[i] for i in clust]
     del tmp, centroids, labels, labeldict
