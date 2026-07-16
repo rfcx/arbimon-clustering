@@ -358,7 +358,16 @@ if __name__ == "__main__":
 
     print('Projection finished... ', time.time()-t0)
     progress = 4 # projection completed
+    # mysql2pg W1 (#28 explicit completion, 2026-07-15): set state='completed'
+    # EXPLICITLY. On MySQL the jobs_BEFORE_UPDATE trigger flipped state when
+    # progress reached progress_steps (so this is idempotent there); on
+    # PostgreSQL that trigger is DELIBERATELY NOT PORTED (it was the #28
+    # false-completed bug class) -- without this the job stays 'processing'
+    # forever on the PG path. Terminal success = state+completed+last_update
+    # in ONE statement (worker-port template rule 3; last_update bump is the
+    # Defect-D law -- the reverse sync keys on it).
     upd = jobs.update(jobs.c.job_id==job_id).values(progress=jobs.c.progress+1,
+                                                    state='completed',
                                                     last_update=dt.datetime.now(),
                                                     completed=1)
     session.execute(upd)
