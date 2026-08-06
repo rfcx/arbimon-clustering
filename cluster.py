@@ -22,6 +22,7 @@ session, engine, metadata = connect() # RDS connection
 print('DB connections...')
 jobs = sqal.Table('jobs', metadata, autoload=True, autoload_with=engine)
 job_params = sqal.Table('job_params_audio_event_clustering', metadata, autoload=True, autoload_with=engine)
+aedc = sqal.Table('audio_event_detections_clustering', metadata, autoload=True, autoload_with=engine)
 log_filename = '_log.json'
 progress = 0
 
@@ -224,6 +225,37 @@ if __name__ == "__main__":
     ids = np.hstack(ids)
     print(feas.shape)
     print(ids.shape)
+
+    # Id-liveness guard (2026-08-06, the id-VINTAGE twin of the width guard
+    # above): shard _ids.npy files can name aed_ids that no longer exist in
+    # audio_event_detections_clustering — e.g. shards written by a previous
+    # run whose rows were later superseded (per-chunk delete+insert re-mints
+    # ids) or removed. Both generations are the same WIDTH (same code), so
+    # the width guard is blind to it; pre-guard, such jobs silently published
+    # cluster JSON referencing nonexistent detections (2026-08-06: jobs
+    # 166120/166717/166718/166907). Verify every shard id resolves to a live
+    # row for THIS aed job; refuse loudly otherwise.
+    print('Verifying shard ids against database...')
+    _shard_ids = [int(i) for i in ids]
+    _live = set()
+    _CHUNK = 10000
+    for _o in range(0, len(_shard_ids), _CHUNK):
+        _batch = _shard_ids[_o:_o + _CHUNK]
+        _rows = session.execute(
+            sqal.select([aedc.c.aed_id]).where(sqal.and_(
+                aedc.c.job_id == aed_job_id,
+                aedc.c.aed_id.in_(_batch)))).fetchall()
+        _live.update(int(r[0]) for r in _rows)
+    _dead = [i for i in _shard_ids if i not in _live]
+    if _dead:
+        raise RuntimeError(
+            f'STALE FEATURE SHARD IDS for aed_job {aed_job_id}: '
+            f'{len(_dead)} of {len(_shard_ids)} shard aed_ids do not resolve '
+            f'to live audio_event_detections_clustering rows '
+            f'(sample: {_dead[:5]}) — refusing to cluster. The feature '
+            f'shards predate the current detection rows; the AED job needs '
+            f'a clean re-run under the epoched shard layout (r<epoch>/).')
+    del _shard_ids, _live, _dead
     # feas columns:
         # 0 time of day x coord
         # 1 time of day y coord
