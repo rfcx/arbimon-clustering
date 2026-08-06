@@ -30,17 +30,36 @@ def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource, aed_job
     # returns 400 — it routes object GET/PUT/HEAD/DELETE by key only). The
     # upstream code listed the prefix to discover the per-shard feature files;
     # instead we derive their EXACT keys. The type-8 AED worker writes one pair
-    # per shard at <aed_job>_<worker_index>{_features,_ids}.npy with contiguous
-    # worker_index 0..N-1, so we probe sequentially and stop after a short run
-    # of missing indices (covers single-pod and parallel AED jobs alike).
+    # per shard at <aed_job>_<chunk_index>{_features,_ids}.npy with contiguous
+    # chunk_index 0..N-1, so we probe sequentially and stop after a short run
+    # of missing indices.
+    #
+    # EPOCHED LAYOUT (2026-08-06 shard-generation fix): a re-run AED job now
+    # writes shards under r<run_epoch>/ and maintains a LATEST marker object
+    # holding the current epoch. Old flat-layout shards from a previous
+    # deployment can therefore never mix with a new run's (the 2026-08-05
+    # failures were 583-wide re-run shards vstacked with 581-wide Lambda-era
+    # leftovers — ValueError deep in numpy). Reader protocol:
+    #   GET <job>/LATEST -> epoch -> probe under r<epoch>/
+    #   LATEST 404 (every pre-fix job) -> legacy flat probe, unchanged.
     bucket = s3_resource.Bucket(bucket_name)
+    epoch = None
+    try:
+        import io as _io
+        buf = _io.BytesIO()
+        bucket.download_fileobj(f'{s3_dir}LATEST', buf)
+        epoch = int(buf.getvalue().decode().strip())
+        print(f'(debug) LATEST run_epoch={epoch}')
+    except Exception:
+        print('(debug) no LATEST marker — legacy flat shard layout')
+    shard_dir = f'{s3_dir}r{epoch}/' if epoch else s3_dir
     downloaded = 0
     misses = 0
     w = 0
     while misses < 4:
         got_any = False
         for suf in ('_features.npy', '_ids.npy'):
-            key = f'{s3_dir}{aed_job_id}_{w}{suf}'
+            key = f'{shard_dir}{aed_job_id}_{w}{suf}'
             local = local_dir + key.split('/')[-1]
             try:
                 bucket.download_file(key, local)
@@ -188,6 +207,18 @@ if __name__ == "__main__":
     #--- check for no AEDs:
     if len(feas)==0:
         return_empty_job()
+
+    # Uniform-width guard (2026-08-06): mixed shard generations produce arrays
+    # of different feature widths and previously died as an opaque numpy
+    # ValueError inside vstack. Fail with a NAMED, actionable error instead.
+    widths = {}
+    for a in feas:
+        widths[a.shape[1]] = widths.get(a.shape[1], 0) + len(a)
+    if len(widths) > 1:
+        raise RuntimeError(
+            f'MIXED FEATURE GENERATIONS for aed_job {aed_job_id}: '
+            f'shard widths {widths} — refusing to cluster. The AED job needs '
+            f'a clean re-run under the epoched shard layout (r<epoch>/).')
 
     feas = np.vstack(feas)
     ids = np.hstack(ids)
