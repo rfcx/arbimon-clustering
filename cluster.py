@@ -22,6 +22,7 @@ session, engine, metadata = connect() # RDS connection
 print('DB connections...')
 jobs = sqal.Table('jobs', metadata, autoload=True, autoload_with=engine)
 job_params = sqal.Table('job_params_audio_event_clustering', metadata, autoload=True, autoload_with=engine)
+aedc = sqal.Table('audio_event_detections_clustering', metadata, autoload=True, autoload_with=engine)
 log_filename = '_log.json'
 progress = 0
 
@@ -30,17 +31,36 @@ def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource, aed_job
     # returns 400 — it routes object GET/PUT/HEAD/DELETE by key only). The
     # upstream code listed the prefix to discover the per-shard feature files;
     # instead we derive their EXACT keys. The type-8 AED worker writes one pair
-    # per shard at <aed_job>_<worker_index>{_features,_ids}.npy with contiguous
-    # worker_index 0..N-1, so we probe sequentially and stop after a short run
-    # of missing indices (covers single-pod and parallel AED jobs alike).
+    # per shard at <aed_job>_<chunk_index>{_features,_ids}.npy with contiguous
+    # chunk_index 0..N-1, so we probe sequentially and stop after a short run
+    # of missing indices.
+    #
+    # EPOCHED LAYOUT (2026-08-06 shard-generation fix): a re-run AED job now
+    # writes shards under r<run_epoch>/ and maintains a LATEST marker object
+    # holding the current epoch. Old flat-layout shards from a previous
+    # deployment can therefore never mix with a new run's (the 2026-08-05
+    # failures were 583-wide re-run shards vstacked with 581-wide Lambda-era
+    # leftovers — ValueError deep in numpy). Reader protocol:
+    #   GET <job>/LATEST -> epoch -> probe under r<epoch>/
+    #   LATEST 404 (every pre-fix job) -> legacy flat probe, unchanged.
     bucket = s3_resource.Bucket(bucket_name)
+    epoch = None
+    try:
+        import io as _io
+        buf = _io.BytesIO()
+        bucket.download_fileobj(f'{s3_dir}LATEST', buf)
+        epoch = int(buf.getvalue().decode().strip())
+        print(f'(debug) LATEST run_epoch={epoch}')
+    except Exception:
+        print('(debug) no LATEST marker — legacy flat shard layout')
+    shard_dir = f'{s3_dir}r{epoch}/' if epoch else s3_dir
     downloaded = 0
     misses = 0
     w = 0
     while misses < 4:
         got_any = False
         for suf in ('_features.npy', '_ids.npy'):
-            key = f'{s3_dir}{aed_job_id}_{w}{suf}'
+            key = f'{shard_dir}{aed_job_id}_{w}{suf}'
             local = local_dir + key.split('/')[-1]
             try:
                 bucket.download_file(key, local)
@@ -189,10 +209,53 @@ if __name__ == "__main__":
     if len(feas)==0:
         return_empty_job()
 
+    # Uniform-width guard (2026-08-06): mixed shard generations produce arrays
+    # of different feature widths and previously died as an opaque numpy
+    # ValueError inside vstack. Fail with a NAMED, actionable error instead.
+    widths = {}
+    for a in feas:
+        widths[a.shape[1]] = widths.get(a.shape[1], 0) + len(a)
+    if len(widths) > 1:
+        raise RuntimeError(
+            f'MIXED FEATURE GENERATIONS for aed_job {aed_job_id}: '
+            f'shard widths {widths} — refusing to cluster. The AED job needs '
+            f'a clean re-run under the epoched shard layout (r<epoch>/).')
+
     feas = np.vstack(feas)
     ids = np.hstack(ids)
     print(feas.shape)
     print(ids.shape)
+
+    # Id-liveness guard (2026-08-06, the id-VINTAGE twin of the width guard
+    # above): shard _ids.npy files can name aed_ids that no longer exist in
+    # audio_event_detections_clustering — e.g. shards written by a previous
+    # run whose rows were later superseded (per-chunk delete+insert re-mints
+    # ids) or removed. Both generations are the same WIDTH (same code), so
+    # the width guard is blind to it; pre-guard, such jobs silently published
+    # cluster JSON referencing nonexistent detections (2026-08-06: jobs
+    # 166120/166717/166718/166907). Verify every shard id resolves to a live
+    # row for THIS aed job; refuse loudly otherwise.
+    print('Verifying shard ids against database...')
+    _shard_ids = [int(i) for i in ids]
+    _live = set()
+    _CHUNK = 10000
+    for _o in range(0, len(_shard_ids), _CHUNK):
+        _batch = _shard_ids[_o:_o + _CHUNK]
+        _rows = session.execute(
+            sqal.select([aedc.c.aed_id]).where(sqal.and_(
+                aedc.c.job_id == aed_job_id,
+                aedc.c.aed_id.in_(_batch)))).fetchall()
+        _live.update(int(r[0]) for r in _rows)
+    _dead = [i for i in _shard_ids if i not in _live]
+    if _dead:
+        raise RuntimeError(
+            f'STALE FEATURE SHARD IDS for aed_job {aed_job_id}: '
+            f'{len(_dead)} of {len(_shard_ids)} shard aed_ids do not resolve '
+            f'to live audio_event_detections_clustering rows '
+            f'(sample: {_dead[:5]}) — refusing to cluster. The feature '
+            f'shards predate the current detection rows; the AED job needs '
+            f'a clean re-run under the epoched shard layout (r<epoch>/).')
+    del _shard_ids, _live, _dead
     # feas columns:
         # 0 time of day x coord
         # 1 time of day y coord
