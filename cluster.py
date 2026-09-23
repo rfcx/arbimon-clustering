@@ -75,8 +75,29 @@ def downloadDirectoryFroms3(bucket_name, s3_dir, local_dir, s3_resource, aed_job
 
 
 
-def return_empty_job():
-    upd = jobs.update(jobs.c.job_id==job_id).values(state='completed',last_update=dt.datetime.now())
+def empty_result_remarks(n_points, eps):
+    """User-facing reason for an empty clustering result (shown on the Jobs
+    page). Two ways to get here: no detections at all, or every detection
+    was classified as noise by DBSCAN at this Distance Threshold."""
+    if not n_points:
+        return ('No clusters found: the audio event detection job has no '
+                'detections to cluster.')
+    return ('No clusters found: all %d detections were classified as noise '
+            'at Distance Threshold %s. Try a larger Distance Threshold or a '
+            'smaller Min. Points.' % (n_points, eps))
+
+
+def return_empty_job(n_points=0):
+    # 2026-09-23 (rfcx-local §383): this path used to write state only, so an
+    # empty result landed as state='completed' with completed=0 and
+    # progress<steps and no explanation -- indistinguishable from a job that
+    # died mid-run. Terminal success is state+completed+progress in ONE
+    # statement (same rule as the normal finish), plus a remark saying why.
+    upd = jobs.update(jobs.c.job_id==job_id).values(
+        state='completed', completed=1,
+        progress=jobs.c.progress_steps,
+        remarks=empty_result_remarks(n_points, epsilon),
+        last_update=dt.datetime.now())
     session.execute(upd)
     session.commit()
 
@@ -112,6 +133,34 @@ def return_empty_job():
     os.sys.exit(0)
 
 
+
+
+def project_2d(inpt, clust):
+    """2-D map for the cluster scatter plot (x_coord/y_coord).
+
+    LDA with >=3 clusters, else PCA -- as upstream. BUT sklearn's LDA returns
+    min(n_components, n_classes-1, rank) columns, and after StandardScaler
+    this 5-column input is often rank-deficient, so LDA can return ONE
+    column even with 10 clusters. The old code then died at mp[:,1]
+    (IndexError) and left the job stuck in 'processing' (rfcx-local §383,
+    job 170584: reproduced 6/6 on its real input, sklearn 1.3.2). Fall back
+    to PCA, and zero-pad as a last resort, so the map is always 2-D."""
+    mp = None
+    if len(set(clust)) >= 3:
+        try:
+            mp = LinearDiscriminantAnalysis(n_components=2).fit_transform(inpt, y=clust)
+        except Exception as e:
+            print('LDA projection failed (%s); falling back to PCA' % e)
+            mp = None
+    if mp is None or mp.ndim != 2 or mp.shape[1] < 2:
+        if mp is not None:
+            print('LDA returned %d component(s); falling back to PCA' % mp.shape[1])
+        n_comp = min(2, inpt.shape[0], inpt.shape[1])
+        mp = PCA(n_components=n_comp).fit_transform(inpt) if n_comp >= 1 \
+            else np.zeros((inpt.shape[0], 0))
+    if mp.shape[1] < 2:
+        mp = np.hstack([mp, np.zeros((mp.shape[0], 2 - mp.shape[1]))])
+    return mp
 
 
 def cluster(data, eps, min_pts, metric='euclidean', stdz=True):
@@ -207,7 +256,7 @@ if __name__ == "__main__":
 
     #--- check for no AEDs:
     if len(feas)==0:
-        return_empty_job()
+        return_empty_job(0)
 
     # Uniform-width guard (2026-08-06): mixed shard generations produce arrays
     # of different feature widths and previously died as an opaque numpy
@@ -292,6 +341,7 @@ if __name__ == "__main__":
     clust = clust.labels_
     print('\t',time.time() - t0)
 
+    n_points_total = len(clust)
     print('Number pts: '+str(len(clust)))
     print('Clustered pts: '+str(len(clust[clust!=-1])))
     print('Number clusters: '+str(len(set(clust).difference([-1]))))
@@ -324,7 +374,7 @@ if __name__ == "__main__":
         tmp5.append(inpt[clust==i][dist_sorted_idx[:max_cluster_size]])
 
     if len(tmp1)==0:
-        return_empty_job()
+        return_empty_job(n_points_total)
 
     feas = np.vstack(tmp1)
     ids = np.hstack(tmp2)
@@ -370,11 +420,7 @@ if __name__ == "__main__":
 
     print('Projection...')
 
-    # LDA
-    if len(set(clust))>=3:
-        mp = LinearDiscriminantAnalysis(n_components=2).fit_transform(inpt, y=clust)
-    else:
-        mp = PCA(n_components=2).fit_transform(inpt)
+    mp = project_2d(inpt, clust)
 
     # sort clusters
     print('Sorting clusters by projection...')

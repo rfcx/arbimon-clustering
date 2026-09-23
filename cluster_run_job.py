@@ -29,6 +29,7 @@ clusters_detected columns are exactly what arbimon-legacy clustering-jobs.js +
 routes/.../clustering-jobs.js reconstruct, so no frontend-contract change is
 needed beyond routing creation through the jobqueue.
 """
+import traceback
 import os
 import sys
 import json
@@ -84,10 +85,52 @@ def main(job_id):
                 '-s', str(max_size),
                 '-j', str(job_id),
                 '-a', str(aed_job_id)]
-    runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                'cluster.py'),
-                   run_name='__main__')
+    try:
+        runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    'cluster.py'),
+                       run_name='__main__')
+    except Exception as e:
+        # 2026-09-23 (rfcx-local §383): an uncaught exception in cluster.py
+        # used to leave the row in state='processing' forever -- the K8s Job
+        # failed and was GC'd, and the dispatcher reaper never revives a
+        # non-resumable type. Record a terminal error the user can read, then
+        # still exit non-zero so the failed-Job alerts keep firing.
+        # (SystemExit is not an Exception: cluster.py's empty-result path
+        # exits 0 via sys.exit and is NOT caught here.)
+        traceback.print_exc()
+        mark_error(job_id, error_remarks(e))
+        return 1
     return 0
+
+
+def error_remarks(exc):
+    """Short, user-facing reason (shown on the Jobs page)."""
+    msg = ' '.join(str(exc).split())[:300]
+    return ('Clustering failed: %s%s. Please try again; if it fails again, '
+            'try a different Distance Threshold or contact support.'
+            % (type(exc).__name__, (': ' + msg) if msg else ''))
+
+
+def mark_error(job_id, remarks):
+    """Terminal error on a FRESH connection (cluster.py's own session may be
+    mid-transaction). Only a row still 'processing' and not cancel-requested
+    is touched, so a user cancel is never overwritten. Best effort: a DB
+    failure here must not mask the original exception in the logs."""
+    try:
+        session, engine, metadata = connect()
+        jobs = sqal.Table('jobs', metadata, autoload=True, autoload_with=engine)
+        session.execute(jobs.update().where(sqal.and_(
+            jobs.c.job_id == job_id,
+            jobs.c.state == 'processing',
+            jobs.c.cancel_requested == 0,
+        )).values(state='error', completed=-1, remarks=remarks,
+                  last_update=dt.datetime.now()))
+        session.commit()
+        session.close()
+        engine.dispose()
+        print(f"marked job {job_id} error: {remarks}")
+    except Exception as db_e:
+        print(f"WARNING: could not mark job {job_id} error: {db_e}")
 
 
 if __name__ == "__main__":
