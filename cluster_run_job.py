@@ -86,9 +86,9 @@ def main(job_id):
                 '-j', str(job_id),
                 '-a', str(aed_job_id)]
     try:
-        runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    'cluster.py'),
-                       run_name='__main__')
+        globs = runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            'cluster.py'),
+                               run_name='__main__')
     except Exception as e:
         # 2026-09-23 (rfcx-local §383): an uncaught exception in cluster.py
         # used to leave the row in state='processing' forever -- the K8s Job
@@ -100,6 +100,16 @@ def main(job_id):
         traceback.print_exc()
         mark_error(job_id, error_remarks(e))
         return 1
+    # 2026-10-01 (rfcx-local FINDING-2026-10-01-aed-roi-review-surfaces-vs-prewarm):
+    # warm this run's thumbnails -- the ONLY ROIs the AED review page can show.
+    # Fire-and-forget, after the job is already 'completed'; never fails the job.
+    # Default OFF (MEDIA_PREWARM_API_URL unset). cluster.py's empty-result path
+    # exits via SystemExit before this point, so it is never reached there.
+    try:
+        import clustering_prewarm
+        clustering_prewarm.run_after_cluster(job_id, aed_job_id, globs)
+    except Exception as e:
+        print(f"clustering-prewarm: not run ({e.__class__.__name__}: {e})")
     return 0
 
 
