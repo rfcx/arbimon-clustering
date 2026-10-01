@@ -33,5 +33,6 @@ WORKDIR /app
 COPY cluster.py /app/cluster.py
 COPY db.py /app/db.py
 COPY cluster_run_job.py /app/cluster_run_job.py
+COPY clustering_prewarm.py /app/clustering_prewarm.py
 
 ENTRYPOINT ["python3", "/app/cluster_run_job.py"]
