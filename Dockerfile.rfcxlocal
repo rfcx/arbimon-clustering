@@ -27,12 +27,17 @@ RUN apt-get update && \
 RUN pip install --no-cache-dir \
       numpy==1.24.4 scikit-learn==1.3.2 scipy==1.10.1 boto3==1.28.71 \
       npy-append-array umap-learn==0.5.7 pacmap==0.9.1 \
-      SQLAlchemy==1.4.47 mysql-connector-python==8.1.0 psycopg2-binary==2.9.9
+      SQLAlchemy==1.4.47 mysql-connector-python==8.1.0 psycopg2-binary==2.9.9 \
+      pika==1.3.2
 
 WORKDIR /app
 COPY cluster.py /app/cluster.py
 COPY db.py /app/db.py
 COPY cluster_run_job.py /app/cluster_run_job.py
 COPY clustering_prewarm.py /app/clustering_prewarm.py
+# 2026-10-01: queue consumer (rfcx-local DESIGN-2026-10-01-heavy-job-queue-clustering.md).
+# The ENTRYPOINT stays cluster_run_job.py (per-job k8s Job path, CLUSTERING_QUEUE_MODE=off);
+# the clustering-worker Deployment overrides the command to cluster_consume.py.
+COPY cluster_consume.py /app/cluster_consume.py
 
 ENTRYPOINT ["python3", "/app/cluster_run_job.py"]
